@@ -11,14 +11,16 @@
 const { exec } = require('child_process');
 const can = require('bindings')('can_addon');
 
-// duplicate process Id variable
+// duplicate process id Id variable
 var monReadl = 0;
 var monSendl = 0;
 
+// duplicate can Id container
+var watchSend = [];
+var watchRead = [];
 
-// duplicate device Id container
-var monSendID = [];
-var monReadID = [];
+var read_all_singleton = false;
+var monReadAll = {setInterval_timeout:null, read_process:null, interval:null};
 
 /* istanbul ignore next */
 function intToHex(value) {
@@ -27,13 +29,15 @@ function intToHex(value) {
   return number
 }
 
-// bring can interface down
+/* 
+ * bring can interface down
+ */
 /* istanbul ignore next */
-var can_if_down = exports.can_if_down = function(device, cb){
-  if(!device){
-    device = 'can0';
+var can_if_down = exports.can_if_down = function(can_interface, cb){
+  if(!can_interface){
+    throw new Error('invalid can interface argument');
   }
-  exec('ifconfig ' + device + ' down', (error, stdout, stderr) => {
+  exec('sudo ifconfig ' + can_interface + ' down', (error, stdout, stderr) => {
     if (error) {
       if(cb){
         return cb(error, null);
@@ -49,7 +53,7 @@ var can_if_down = exports.can_if_down = function(device, cb){
       console.error(`ifconfig down stderr: ${stderr}`);
       return;  
     }
-    //console.log('bringing '+device+' down', stdout);
+    //console.log('bringing '+can_interface+' down', stdout);
     if(cb){
       process.nextTick(function (){
         cb(null, true);
@@ -58,13 +62,15 @@ var can_if_down = exports.can_if_down = function(device, cb){
   });
 }
 
-// bring can interface up
+/*
+ * bring can interface up
+ */
 /* istanbul ignore next */
-var can_if_up = exports.can_if_up = function(device, cb){
-  if(!device){
-    device = 'can0';
+var can_if_up = exports.can_if_up = function(can_interface, cb){
+  if(!can_interface){
+    throw new Error('invalid can interface argument');
   }
-  exec('ifconfig ' + device + ' up', (error, stdout, stderr) => {
+  exec('sudo ifconfig ' + can_interface + ' up', (error, stdout, stderr) => {
     if (error) {
       if(cb){
         return cb(error, null);
@@ -80,7 +86,7 @@ var can_if_up = exports.can_if_up = function(device, cb){
       console.error(`ifconfig up stderr: ${stderr}`);
       return;  
     }
-    // console.log('bringing '+device+' up', stdout);
+    // console.log('bringing '+can_interface+' up', stdout);
     if(cb){
       process.nextTick(function (){
         cb(null, true);
@@ -89,29 +95,35 @@ var can_if_up = exports.can_if_up = function(device, cb){
   });
 }
 
-// set can interface bitrate and txqueuelen
+/*
+ * set can interface bitrate, qlen and rs
+ */
 /* istanbul ignore next */
-var set_can_if = exports.set_can_if = function(device, bitrate, txqueuelen, cb){
-  if(!device || !bitrate || !txqueuelen){
-    device = 'can0';
+var set_can_if = exports.set_can_if = function(can_interface, bitrate, qlen, rs, cb){
+  if(!can_interface || !bitrate || !qlen ||!rs){
+    can_interface = 'can0';
     bitrate = '500000';
-    txqueuelen = '500';
+    qlen = '1000';
+    rs = '100';
   }
-  if(bitrate){
+  if(bitrate && typeof bitrate === 'number'){
     bitrate = bitrate.toString();
   }
-  if(txqueuelen){
-    txqueuelen = txqueuelen.toString();
+  if(qlen && typeof qlen === 'number'){
+    qlen = qlen.toString();
   }
-  // exec('ip link set '+device+' txqueuelen '+txqueuelen+' type can bitrate ' + bitrate + ' restart-ms 100', (error, stdout, stderr) => {
-  exec('ip link set '+device+' type can bitrate ' + bitrate + ' restart-ms 100', (error, stdout, stderr) => {
+  if(rs && typeof rs === 'number'){
+    rs = rs.toString();
+  }
+  exec('sudo ip link set '+can_interface+' qlen '+qlen+' type can bitrate ' + bitrate + ' restart-ms ' + rs, (error, stdout, stderr) => {
+  //exec('sudo ip link set '+can_interface+' qlen '+qlen+' type can bitrate ' + bitrate + ' restart-ms ' + rs, { shell: true, stdio: 'inherit' }, (error, stdout, stderr) => {
     /* istanbul ignore next */
     if (error) {
       if(cb){
         return cb(error, null);
       }
       console.error(`set_can_if() error: ${error}`);
-      //console.log('Device '+device+' or resource busy');
+      //console.log('can_interface '+can_interface+' or resource busy');
       return;
     }
     /* istanbul ignore next */
@@ -123,7 +135,7 @@ var set_can_if = exports.set_can_if = function(device, bitrate, txqueuelen, cb){
       console.error(`set_can_if() stderr: ${stderr}`);
       return;  
     }
-    console.log('ip link set '+ device +' up with txqueuelen '+ txqueuelen +' and bitrate '+ bitrate +' - success');
+    console.log('ip link setup - '+ can_interface +' is up\nbitrate: '+ bitrate +', qlen: ' + qlen + ', restart-ms: ' + rs);
     if(cb){
       process.nextTick(function (){
         cb(null, true);
@@ -132,47 +144,139 @@ var set_can_if = exports.set_can_if = function(device, bitrate, txqueuelen, cb){
   });
 };
 
-var close = exports.close = function(device, cb){
-  if(!device){
-    device = 'can0';
+/*
+ * close can interface
+ * 'ifconfig ' + can_interface + ' down'
+ */
+var close = exports.close = function(can_interface, cb){
+  if(!can_interface){
+    can_interface = 'can0';
   }
-  can_if_down(device);
+  can_if_down(can_interface);
+  /*if(watchSend.length > 0){
+    for (let x = 0; x < watchSend.length; x++) {
+      clearInterval((watchSend[x].watch_timeout);
+    }
+  }
+  if(watchRead.length > 0){
+    for (let i = 0; i < watchRead.length; i++) {
+      clearInterval((watchRead[i].setInterval_timeout);
+    }
+  }*/
 }
 
-// bring up interface can - ifconfig down, set bitrate and txqueuelen, ifconfig up
-/* istanbul ignore next */
-var open = exports.open = function(device, bitrate, txqueuelen, cb){
-  if(!device || !bitrate || !txqueuelen){
-    device = 'can0';
-    bitrate = '500000';
-    txqueuelen = '500';
+/*
+ * bring up can interface - ifconfig down, ifconfig up, set bitrate, qlen & rs
+ * open(can_interface, bitrate, qlen, cb)
+ * open(can_interface, {bitrate:bitrate, qlen:qlen, rs:rs}, cb)
+ */
+var open = exports.open = function(){
+  let args_len = arguments.length, options = {};
+  let can_interface = null, bitrate = null, qlen = null, rs = null, cb = null;
+  
+  if(args_len < 3){
+    throw new Error('invalid arguments');
+  }
+
+  if(typeof arguments[args_len - 1] !== 'function'){
+    throw new Error('invalid callback argument');
   }
   
+  if(arguments[0]){
+    can_interface = arguments[0];
+  }
+
+  if(arguments[1]){
+    options = arguments[1];
+    bitrate = arguments[1];
+  }
+
+  if(arguments[2] && typeof arguments[2] !== 'function' ){
+    qlen = arguments[2];
+  }
+
+  if(arguments[3] && typeof arguments[3] !== 'function' ){
+    rs = arguments[3];
+  }
+  
+  if(options.bitrate){
+    bitrate = options.bitrate;
+  }
+
+  if(options.qlen){
+    qlen = options.qlen;
+  }
+
+  if(options.rs){
+    rs = options.rs;
+  }
+  
+  if(typeof arguments[args_len - 1] === 'function'){
+    cb = arguments[args_len - 1];
+  }
+  
+  if(typeof can_interface !== 'string'){
+    throw new Error('invalid can_interface argument');
+  }
+
+  if(args_len > 3 && bitrate && !Number.isInteger(bitrate)){
+    throw new Error('invalid bitrate argument');
+  }
+
+  if(args_len > 3 && qlen && !Number.isInteger(qlen)){
+    throw new Error('invalid qlen argument')
+  }
+
+  if(args_len > 3 && rs && !Number.isInteger(rs)){
+    throw new Error('invalid rs argument')
+  }
+
+  if(!cb){
+    return console.error(new Error('missing callback argument'));
+  }
+
   if(bitrate){
     bitrate = bitrate.toString();
   }
 
-  if(txqueuelen){
-    txqueuelen = txqueuelen.toString();
+  if(qlen){
+    qlen = qlen.toString();
   }
 
-  // can interface down
-  can_if_down(device, function(err, result){
-    if(err) {
-		console.error('can_if_down error', err);
-        if(err.code == 255){
-			console.error('\nTry running running your app w/ sudo\n'); 
-		}
-		process.exit();
+  if(rs){
+    rs = rs.toString();
+  }
 
+  if(!can_interface || !bitrate || !qlen || !rs){
+    can_interface = 'can0';
+    bitrate = '500000';
+    qlen = '1000';
+    rs = '100';
+  }
+
+  /*
+  console.log('can_interface', can_interface);
+  console.log('bitrate', bitrate);
+  console.log('qlen', qlen);
+  console.log('rs', rs);
+  */
+
+  // can interface down
+  can_if_down(can_interface, function(err, result){
+    if(err) {
+      console.error('can_if_down error', err);
+      if(err.code == 255){
+	      console.error('\nTry running running your app w/ sudo\n'); 
+      }
+      process.exit();
     }
     if(result){
-      // set can bitrate and txqueuelen
-      set_can_if(device, bitrate, txqueuelen, function(err, result){
+      // set can bitrate, qlen and rs
+      set_can_if(can_interface, bitrate, qlen, rs, function(err, result){
         if(err) return console.error('set_can_if error', err);
         if(result){
           // bring can interface up
-          can_if_up(device, function(err, result){
+          can_if_up(can_interface, function(err, result){
             if(err) return console.error('can_if_down error', err);
             if(result){
               if(cb){
@@ -193,18 +297,14 @@ var open = exports.open = function(device, bitrate, txqueuelen, cb){
       send frame base function
 
  ************************************/
-// send frame data to can bus 
-var send_can = function(device, data, cb){
-  if(!device){
-    device = 'can0';
+var send_can = function(can_interface, data, cb){
+  if(!can_interface){
+     throw new Error('invalid can interface');
   }
   if(!data){
-    if(cb){ 
-      return cb(new Error('missing payload'), null);
-    }
-    throw new Error('missing payload');
+    throw new Error('invalid can data');
   }
-  let rv = can.sc_send(Buffer.from(device + '\0'), Buffer.from(data + '\0'));
+  let rv = can.sc_send(Buffer.from(can_interface + '\0'), Buffer.from(data + '\0'));
   // console.log('send success', rv);
   /* istanbul ignore next */
   if(cb){
@@ -217,79 +317,187 @@ var send_can = function(device, data, cb){
   }
 }
 
-// send a normalized frame data (separate frame id and frame payload), one-time function call
-//var sendN = exports.sendN = function(device, id, pl, cb){
-var send = exports.send = function(device, id, pl, cb){
-  if(typeof id !== 'string'){
-    return cb('invalid id', null);	
+/* 
+ * send a normalized frame data (separate frame id and frame payload), one-time function call
+ * send(can_interface, '025', 33, cb)
+ */
+var send = exports.send = function(can_interface, id, pl, cb){
+  if(typeof can_interface !== 'string'){
+    throw new Error('invalid can interface argument')
   }
-  /*if(typeof pl !== 'string'){
-    return cb('invalid payload', null);	
-  }*/ 
+
+  if(typeof id !== 'string'){
+    new Error('invalid can id argument')	
+  }
 
   let data = id + '#' + pl; 
-  send_can(device, data, cb);
+  send_can(can_interface, data, cb);
 }
 
-// send a normalized frame (separate frame id and frame payload) data continously using an integrated setInterval function
-var sendNL = exports.sendNL = function(device, id, pl, cb, interval){
-  if(!interval){
-    interval = 10;
+/*
+ * send a classic frame data (id and payload integrated in argument data), one-time function call
+ * sendC(can_interface, '025#33, cb)
+ */
+var sendC = exports.sendC = function(can_interface, data, cb){
+  if(typeof can_interface !== 'string'){
+    let em = 'invalid can interface argument';
+    if(cb){
+      return cb(new Error(em), null);
+    }
+    throw new Error(em); 
   }
-  if(typeof id !== 'string'){
-    return cb('invalid id', null);	
+  if(typeof data !== 'string'){
+    let em = 'invalid data argument'; 
+    if(cb){
+      return cb(new Error(em), null);
+    }
+    throw new Error(em);
   }
-  /*if(typeof pl !== 'string'){
-    return cb('invalid payload', null);	
-  }*/ 
+ 
+  send_can(can_interface, data, cb);
+};
 
-  let data = id + '#' + pl; 
 
-  send_can(device, data, cb);
+/*
+ * watch helper method for can send
+ * watch data for changes before sending it to can bus   
+ */
+var watch = exports.watch = function(){
+  let args_len = arguments.length, options = {}, read_process = null;
+  let can_interface = null, id = null, option = null, cyclic = null, interval = null, cb = null;
 
-  for (let x = 0; x < monSendID.length; x++) {
-    if(monSendID[x] === id){
+  let value = null, current_value = null;
+  let watch_timeout = {};
+  let data = {id:null, payload:null}; 
+
+  if(args_len < 2){
+    throw new Error('invalid arguments');
+  }
+  if(typeof arguments[args_len - 1] !== 'function'){
+    throw new Error('invalid callback argument');
+  }
+  
+  if(arguments[0]){
+    can_interface = arguments[0];
+  }
+
+  if(arguments[1]){
+    options = arguments[1];
+    data.id = arguments[1];
+    id = arguments[1];
+  }
+  
+  if(options.id){
+    id = options.id;
+    data.id = options.id;
+  }
+
+  if(options.payload){
+    data.payload = options.payload;
+  }
+
+  if(options.option){
+    option = options.option;
+  }
+
+  if(options.cyclic == false || options.cyclic == true){
+    cyclic = options.cyclic;
+  }
+
+  if(options.interval){
+    interval = options.interval;
+  }
+
+  if(typeof arguments[args_len - 1] === 'function'){
+    cb = arguments[args_len - 1];
+  }
+  
+  if(typeof can_interface !== 'string'){
+    throw new Error('invalid can can_interface argument');
+  }
+  if(args_len > 2 && id && !Array.isArray(id) && typeof id !== 'string'){
+    throw new Error('invalid can id argument');
+  }
+  if(args_len > 2 && id && Array.isArray(id) && typeof id[0] !== 'string'){
+    for (let x = 0; x < id.length; x++) {
+      if(typeof id[x] !== 'string'){
+        throw new Error('invalid can id argument');
+      }
+    }
+  }
+
+  if(args_len > 2 && option && typeof option !== 'string'){
+    throw new Error('invalid option argument');
+  }
+   
+  if((args_len > 2 && interval && typeof interval !== 'number') || args_len === 6 && Number.isInteger(interval) !== true){
+    throw new Error('invalid interval argument');
+  }
+ 
+  if(!id||typeof id === 'function'){
+    id = null;
+  }
+
+  if(!option||typeof option === 'function'){
+    option = '-e';
+  }
+
+  if(cyclic === null||typeof cyclic === 'function'){
+     cyclic = true;
+  }  
+
+  if(!interval||typeof interval === 'function'){
+    interval = 1000;
+  }
+
+  if(!cb){
+    return console.error(new Error('missing callback argument'));
+  }
+
+  for (let x = 0; x < watchSend.length; x++) {
+    if(watchSend[x].id === id){
       return;
     }
   }
 
-  monSendID.push(id);
-   
-  let process_interval = setInterval(function(){
-    send_can(device, data, cb);
-  }, interval); 
-}
+  watchSend.push({id:id, watch_timeout:watch_timeout});
 
-// send a classic frame data (id and payload integrated in data), one-time function call
-var sendC = exports.sendC = function(device, data, cb){
-  if(typeof id !== 'string'){
-    return cb('invalid id', null);	
-  }
-  /*if(typeof pl !== 'string'){
-    return cb('invalid payload', null);	
-  }*/ 
+  // initialize to send immediately on the first cycle
+  value = 1;
+  watch_timeout = setInterval(function(){
+    if(data.payload){
+      value = data.payload;
+    }
+    if(data.interval && data.interval > 0 ){
+      interval = data.interval;
+    }
+    if(data.interval && data.interval < 0 ){
+      interval = 1;
+    }
 
-  send_can(device, data, cb);
-}
-
-// send a classic frame data (id and payload integrated in data) continously to can-bus using an itegrated setInterval function
-// data = id + '#' + pl
-var sendCL = exports.sendCL = function(device, data, cb, interval){
-  if(!interval){
-    interval = 100;
-  }
- 
-  if(monSendl === 0){
-    monSendl++;
-  } 
-  else{
-    return;
-  }
-
-  let process_interval = setInterval(function(){
-    send_can(device, data, cb);
-  }, interval); 
-}
+    if(current_value !== value){
+      //console.log('value has changed');
+      /*send('can0', data.id, value, (err) => {
+	    if(err) return console.error('internal send error', err);
+        data.sent = true;
+        data.change = true;
+        cb(null, data);
+      });*/
+      data.sent = true;
+      data.change = true;
+      //cb(null, data);
+      current_value = value;
+    }
+    else{
+      //console.log('no value change');
+      data.sent = false;
+      data.change = false;
+      //cb(null, data);
+    }
+    cb(null, data);
+  }, interval);
+      
+};
 
 
 /************************************
@@ -298,12 +506,11 @@ var sendCL = exports.sendCL = function(device, data, cb, interval){
 
  ************************************/
 // read frame data from can bus
-var read_can = function(device, option, cb){
-
+var read_can = function(can_interface, option, cb){
   let arrFrame, data = [], on = false, timeout = 100;
   let buf = null, buffer_check = null, canID = null, id_string = null, frame = null;
 
-  arrFrame = can.sc_read(Buffer.from(device + '\0'), Buffer.from(option + '\0'), timeout);
+  arrFrame = can.sc_read(Buffer.from(can_interface + '\0'), Buffer.from(option + '\0'), timeout);
 
   // copy the contents of arrFrame to buf
   buf = Buffer.from(arrFrame);
@@ -317,7 +524,7 @@ var read_can = function(device, option, cb){
   /* istanbul ignore next */
   if(buffer_check && buf[0] === '101'){
     if(cb){
-      process.nextTick(()=>{
+      process.nextTick(() => {
         return cb(new Error('frame error'));
       });
     }
@@ -327,7 +534,7 @@ var read_can = function(device, option, cb){
   /* istanbul ignore next */
   else if(buffer_check && buf[0] === '111'){
     if(cb){
-      process.nextTick(()=>{
+      process.nextTick(() => {
         return cb(new Error('option error'));
       });
     }
@@ -377,161 +584,382 @@ var read_can = function(device, option, cb){
   }
 }
 
-// read frame data from a specific can id, one-time function call
-// w/ option as argument
-var readSO = exports.readSO = function(device, option , id, cb){
-  if(typeof id !== 'string'){
-    return cb('invalid id', null);
-  } 
-  if(!cb){
-    throw new Error('callback is required');
+/* 
+ * read frame data from a specific can id, one-time function call
+ * w/ option as argument
+ */
+/* istanbul ignore next */
+var readSO = exports.readSO = function(can_interface, option , id, cb){
+  if(typeof can_interface !== 'string'){
+    throw new Error('invalid can_interface argument');
   }
-  if(!device){
-    device = 'can0';
-  }
+
   if(!option){
     option = '-e';
   }
+ 
+  if(typeof id !== 'string'){
+    throw new Error('invalid can id argument');
+  } 
 
-  read_can(device, option, function(err, frame){
-    if(err){return cb(err, null);}
-    if(frame.id === id){ 
-      cb(null, frame.data); // frame.data[0] + '.' + frame.data[1];
-    }
-  });
+  if(!cb){
+    throw new Error('callback is required');
+  }
+
+  read_can(can_interface, option, cb);
 }
 
-// read frame data from a specific can id continously using an integrated setInterval function
-// w/ option as argument
-var readSOL = exports.readSOL = function(device, option , id, cb, interval){
+/*
+ * read frame data from a specific can id continously using an integrated setInterval function
+ * w/ option as argument
+ */
+/* istanbul ignore next */
+var readSOL = exports.readSOL = function(can_interface, option , id, cb, interval){
+  if(typeof can_interface !== 'string'){
+    throw new Error('invalid can_interface argument');
+  }
+
+  if(!option){
+    option = '-e';
+  }
+ 
+  if(typeof id !== 'string'){
+    throw new Error('invalid can id argument');
+  } 
+
   if(!interval){
     interval = 10;
   }
-  if(typeof id !== 'string'){
-    return cb('invalid id', null);
-  } 
+
   if(!cb){
     throw new Error('callback is required');
   }
-  if(!device){
-    device = 'can0';
-  }
-  if(!option){
-    option = '-e';
-  }
 
-  for (let x = 0; x < monReadID.length; x++) {
-    if(monReadID[x] === id){
+  for (let x = 0; x < watchRead.length; x++) {
+    if(watchRead[x] === id){
       return;
     }
   }
 
-  monReadID.push(id);
+  watchRead.push(id);
       
-  let process_interval = setInterval(function(){
-    read_can(device, option, id, function(err, frame){
+  let setInterval_timeout = setInterval(function(){
+    read_can(can_interface, option, id, function(err, frame){
       if(err){return cb(err, null);}
       if(frame.id === id){ 
         cb(null, frame.data);
       }
     });
   }, interval);
+ 
 }
 
-// read frame data from a specific can id continously using an integrated setInterval function
-// w/ option set to '-e' everytime
-//var readSL = exports.readSL = function(device, id, cb, interval){
-var read = exports.read = function(device, id, cb, interval){
-  let option = '-e';
+/*
+ * read frame data from can bus w/ options
+ * options {id:id, option:option, cyclic:true||false}
+ */
+var read = exports.read = function(){
+  let args_len = arguments.length, options = {};
+  let read_process = null, setInterval_timeout = null;
+  let can_interface = null, id = null, option = null, cyclic = null, interval = null, cb = null;
 
-  if(!interval){
-    interval = 10;
-  }
-  if(typeof id !== 'string'){
-    return cb('invalid id', null);
-  } 
-  if(!cb){
-    throw new Error('callback is required');
-  }
-  if(!device){
-    device = 'can0';
-  }
-  if(!option){
-    option = '-e';
+  if(args_len < 2){
+    throw new Error('invalid arguments');
+
   }
 
-  for (let x = 0; x < monReadID.length; x++) {
-    if(monReadID[x] === id){
-      return;
-    }
-  }
-
-  monReadID.push(id);
-      
-  let process_interval = setInterval(function(){
-    read_can(device, option, function(err, frame){
-      if(err){return cb(err, null);}
-      if(frame.id === id){ 
-        cb(null, frame.data);
-      }
-    });
-  }, interval);
-}
-
-// read all available frame data from can bus, one-time function call 
-// w/ option as argument
-var readAO = exports.readAO = function(device, option, cb){
-  if(!cb){
-    throw new Error('callback is required');
-  }
-  if(!device){
-    device = 'can0';
-  }
-  if(!option){
-    option = '-e';
+  if(typeof arguments[args_len - 1] !== 'function'){
+    throw new Error('invalid arguments');
   }
   
-  read_can(device, option, cb);
-}
+  if(arguments[0]){
+    can_interface = arguments[0];
+  }
 
-// read all available frame data from can bus continously using an integrated setInterval function 
-// w/ option as argument
-var readAOL = exports.readAOL = function(device, option, cb, interval){
-  if(!interval){
+  if(arguments[1]){
+    options = arguments[1];
+  }
+  
+  if(options.id){
+    id = options.id;
+  }
+
+  if(options.option){
+    option = options.option;
+  }
+
+  if(options.cyclic == false || options.cyclic == true){
+    cyclic = options.cyclic;
+  }
+
+  if(options.interval){
+    interval = options.interval;
+  }
+
+  if(typeof arguments[args_len - 1] === 'function'){
+    cb = arguments[args_len - 1];
+  }
+  
+  if(typeof can_interface !== 'string'){
+    throw new Error('invalid can interface argument');
+  }
+
+  if(args_len > 2 && id && !Array.isArray(id) && typeof id !== 'string'){
+    throw new Error('invalid can id argument');
+  }
+
+  if(args_len > 2 && id && Array.isArray(id) && typeof id[0] !== 'string'){
+    for (let x = 0; x < id.length; x++) {
+      if(typeof id[x] !== 'string'){
+        throw new Error('invalid can id argument');
+      }
+    }
+  }
+
+  if(args_len > 2 && option && typeof option !== 'string'){
+    throw new Error('invalid option argument');
+  }
+  
+  /*if(args_len > 2 && (cyclic == null || cyclic === false || cyclic === true)){
+    //console.log('cyclic is valid'); 
+  }
+  else{
+    throw new Error('invalid cyclic argument');
+  }*/
+  
+  if((args_len > 2 && interval && typeof interval !== 'number') || args_len === 6 && Number.isInteger(interval) !== true){
+    throw new Error('invalid interval argument');
+  }
+ 
+  if(!id||typeof id === 'function'){
+    id = null;
+  }
+
+  if(!option||typeof option === 'function'){
+    option = '-e';
+  }
+
+  if(cyclic === null||typeof cyclic === 'function'){
+     cyclic = true;
+  }  
+
+  if(!interval||typeof interval === 'function'){
     interval = 10;
   }
 
-  if(monReadl === 0){
-    monReadl++;
-  } 
-  else{
-    return;
+  if(!cb){
+    throw new Error('missing callback argument'); 
   }
 
-  let process_interval = setInterval(() => {
-    readAO(device, option, cb);
-  }, interval); 
+  /*
+  console.log('can_interface', can_interface);
+  console.log('id', id);
+  console.log('option', option);
+  console.log('cyclic', cyclic);
+  console.log('interval', interval);
+  //console.log('cb', cb);
+  */
+   
+  let arid = '' + id;
+  if(typeof id === 'string' || Array.isArray(id)){
+    for (let x = 0; x < watchRead.length; x++) {
+      if(typeof id === 'string'){
+        if(watchRead[x].id === id){
+          return;
+        }
+      }
+      else if(id && Array.isArray(id)){
+        if(watchRead[x].id === arid){
+          return;
+        }
+      }
+    }
+    if(typeof id === 'string'){
+      watchRead.push({id:id, setInterval_timeout:setInterval_timeout});
+    }
+    else{
+      watchRead.push({id:arid, setInterval_timeout:setInterval_timeout});
+    }
+  }
+  else{
+    if(read_all_singleton){
+      return;	
+    }
+  }
+
+  //console.log('initialization should be done once only');
+
+  read_process = function(){
+    read_can(can_interface, option, function(err, frame){
+      if(err){return cb(err, null);}
+      if(frame){
+        let fdata = frame.data[0] + '.' + frame.data[1];
+        let can_frame = {id: frame.id, len:frame.len, data:fdata, filter:'off' }
+        
+        // read only from a specific can id
+        if(typeof id === 'string' && frame.id === id){ 
+          can_frame = {id: frame.id, len:frame.len, data:fdata, filter:id};
+          //return cb(null, can_frame);
+        }
+        // read from a group of can id's
+        else if(id && Array.isArray(id)){ 
+	        for (let i = 0; i < id.length; i++) {
+    	      if(id[i] === frame.id){
+              can_frame = {id: frame.id, len:frame.len, data:fdata, filter:id};
+              //return cb(null, can_frame);
+            }
+          }		
+        }
+        // set singleton control for read all can id's 
+        else if(!id){
+          read_all_singleton = true;
+          //cb(null, can_frame);
+        }
+        cb(null, can_frame);
+      }
+    });
+  };
+  
+  if(cyclic === true){    
+    setInterval_timeout = setInterval(read_process, interval);
+  }
+  else{
+    return read_process();
+  }
+
+  if(typeof id === 'string' || Array.isArray(id)){
+    function setMonReadData(x){
+      watchRead[x].setInterval_timeout = setInterval_timeout;
+      watchRead[x].read_process = read_process;
+      watchRead[x].interval = interval;
+    }
+
+    for (let x = 0; x < watchRead.length; x++) {
+      if(typeof id === 'string'){
+        if(watchRead[x].id === id){
+          return setMonReadData(x);
+        }
+      }
+      else if(id && Array.isArray(id)){
+	      if(watchRead[x].id === arid){
+          return setMonReadData(x);
+        }
+      }
+    }
+  }
+  else if(!id){
+    read_all_singleton = true;
+    monReadAll.setInterval_timeout = setInterval_timeout;
+    monReadAll.read_process = read_process;
+    monReadAll.interval = interval;
+  }
 }
 
-
-// read all available frame data from can bus continously using an integrated setInterval function 
-// w/ option set to '-e' everytime
-//var readAL = exports.readAL = function(device, cb, interval){
-var readAll = exports.readAll = function(device, cb, interval){
-  let option = '-e';
-
-  if(!interval){
-    interval = 10;
-  }
-
-  if(monReadl === 0){
-    monReadl++;
-  } 
-  else{
+var stopRead = exports.stopRead = function(id){
+  if(id){
+    if(typeof id === 'string'){ 
+      //console.log('valid single can id');
+    }
+    // read from a group of can id's
+    else if(id && Array.isArray(id)){ 
+      id = '' + id;
+    }		
+ 
+    for (let x = 0; x < watchRead.length; x++) {
+      //console.log(id, watchRead[x].id);
+      if(watchRead[x].id === id){
+        //console.log('watchRead[x].setInterval_timeout', watchRead[x].setInterval_timeout);
+        clearInterval(watchRead[x].setInterval_timeout);
+        console.log('can filter read stopped ...');
+        return;
+      }
+    }
+    console.log('stop can filter read fail, no read process found ...');
     return;
   }
+  else{
+    //console.log('monReadAll.setInterval_timeout', monReadAll.setInterval_timeout);
+    if(monReadAll.setInterval_timeout){
+      //console.log('can read all setInterval_timeout', monReadAll.setInterval_timeout);
+      clearInterval(monReadAll.setInterval_timeout);
+      console.log('can read all stopped ...');
+      return;
+    }
+    else{
+      console.log('stop can read all fail, no read process found ...');
+    }
+  }
+};
 
-  let process_interval = setInterval(() => {
-    readAO(device, option, cb);
-  }, interval); 
-}
+var restartRead = exports.restartRead = function(id){
+  if(id){
+    for (let x = 0; x < watchRead.length; x++) {
+      if(watchRead[x].id === id){
+	      clearInterval(watchRead[x].setInterval_timeout);
+        let setInterval_timeout = setInterval(watchRead[x].read_process, watchRead[x].interval);
+        watchRead[x].setInterval_timeout = setInterval_timeout;
+        console.log('can filter read restarted ...');
+        return; 
+      }
+    }
+    console.log('restart can filter read fail, no read process found ...');
+    return;
+  }
+  else{
+    if(monReadAll.read_process && monReadAll.interval){
+      clearInterval(monReadAll.setInterval_timeout);
+      monReadAll.setInterval_timeout = setInterval(monReadAll.read_process, monReadAll.interval);
+      console.log('can read all restarted ...');
+    }
+    else{
+      console.log('restart can read all fail, no read process found ...');
+    }
+  }
+};
+
+
+/*
+Options: -t <type>   (timestamp: (a)bsolute/(d)elta/(z)ero/(A)bsolute w date)
+         -H          (read hardware timestamps instead of system timestamps)
+         -c          (increment color mode level)
+         -i          (binary output - may exceed 80 chars/line)
+         -a          (enable additional ASCII output)
+         -S          (swap byte order in printed CAN data[] - marked with '`' )
+         -s <level>  (silent mode - 0: off (default) 1: animation 2: silent)
+         -b <can>    (bridge mode - send received frames to <can>)
+         -B <can>    (bridge mode - like '-b' with disabled loopback)
+         -u <usecs>  (delay bridge forwarding by <usecs> microseconds)
+         -l          (log CAN-frames into file. Sets '-s 2' by default)
+         -L          (use log file format on stdout)
+         -n <count>  (terminate after receiption of <count> CAN frames)
+         -r <size>   (set socket receive buffer to <size>)
+         -D          (Don't exit if a "detected" can device goes down.
+         -d          (monitor dropped CAN frames)
+         -e          (dump CAN g frames in human-readable format)
+         -x          (print extra message infos, rx/tx brs esi)
+         -T <msecs>  (terminate after <msecs> without any reception)
+
+Up to 16 CAN interfaces with optional filter sets can be specified
+on the commandline in the form: <ifname>[,filter]*
+
+Comma separated filters can be specified for each given CAN interface:
+ <can_id>:<can_mask> (matches when <received_can_id> & mask == can_id & mask)
+ <can_id>~<can_mask> (matches when <received_can_id> & mask != can_id & mask)
+ #<error_mask>       (set error frame filter, see include/linux/can/error.h)
+ [j|J]               (join the given CAN filters - logical AND semantic)
+
+CAN IDs, masks and data content are given and expected in hexadecimal values.
+When the can_id is 8 digits long the CAN_EFF_FLAG is set for 29 bit EFF format.
+Without any given filter all data frames are received ('0:0' default filter).
+
+Use interface name 'any' to receive from all CAN interfaces.
+
+Examples:
+canread -c -c -ta can0,123:7FF,400:700,#000000FF can2,400~7F0 can3 can8
+canread -l any,0~0,#FFFFFFFF    (log only error frames but no(!) data frames)
+canread -l any,0:0,#FFFFFFFF    (log error frames and also all data frames)
+canread vcan2,12345678:DFFFFFFF (match only for extended CAN ID 12345678)
+canread vcan2,123:7FF (matches CAN ID 123 - including EFF and RTR frames)
+canread vcan2,123:C00007FF (matches CAN ID 123 - only SFF and non-RTR frames)
+*/
+
