@@ -20,7 +20,7 @@ var watchSend = [];
 var watchRead = [];
 
 var read_all_singleton = false;
-var monReadAll = {setInterval_timeout:null, read_process:null, interval:null};
+var watchReadAll = {setInterval_timeout:null, read_process:null, interval:null};
 
 /* istanbul ignore next */
 function intToHex(value) {
@@ -60,7 +60,7 @@ var can_if_down = exports.can_if_down = function(can_interface, cb){
       });
     }
   });
-}
+};
 
 /*
  * bring can interface up
@@ -93,7 +93,7 @@ var can_if_up = exports.can_if_up = function(can_interface, cb){
       });
     }
   });
-}
+};
 
 /*
  * set can interface bitrate, qlen and rs
@@ -163,7 +163,7 @@ var close = exports.close = function(can_interface, cb){
       clearInterval((watchRead[i].setInterval_timeout);
     }
   }*/
-}
+};
 
 /*
  * bring up can interface - ifconfig down, ifconfig up, set bitrate, qlen & rs
@@ -290,7 +290,7 @@ var open = exports.open = function(){
       });
      }
   });
-}
+};
 
 /************************************
 
@@ -315,7 +315,7 @@ var send_can = function(can_interface, data, cb){
       cb(null, rv); 
     });
   }
-}
+};
 
 /* 
  * send a normalized frame data (separate frame id and frame payload), one-time function call
@@ -332,7 +332,7 @@ var send = exports.send = function(can_interface, id, pl, cb){
 
   let data = id + '#' + pl; 
   send_can(can_interface, data, cb);
-}
+};
 
 /*
  * send a classic frame data (id and payload integrated in argument data), one-time function call
@@ -363,7 +363,7 @@ var sendC = exports.sendC = function(can_interface, data, cb){
  * watch data for changes before sending it to can bus   
  */
 var watch = exports.watch = function(){
-  let args_len = arguments.length, options = {}, read_process = null;
+  let args_len = arguments.length, options = {}, watch_process = null;
   let can_interface = null, id = null, option = null, cyclic = null, interval = null, cb = null;
 
   let value = null, current_value = null;
@@ -447,7 +447,7 @@ var watch = exports.watch = function(){
   }  
 
   if(!interval||typeof interval === 'function'){
-    interval = 1000;
+    interval = 100;
   }
 
   if(!cb){
@@ -464,21 +464,16 @@ var watch = exports.watch = function(){
 
   // initialize to send immediately on the first cycle
   value = 1;
-  watch_timeout = setInterval(function(){
+  
+  watch_process = function(){
     if(data.payload){
       value = data.payload;
-    }
-    if(data.interval && data.interval > 0 ){
-      interval = data.interval;
-    }
-    if(data.interval && data.interval < 0 ){
-      interval = 1;
     }
 
     if(current_value !== value){
       //console.log('value has changed');
       /*send('can0', data.id, value, (err) => {
-	    if(err) return console.error('internal send error', err);
+	      if(err) return console.error('internal send error', err);
         data.sent = true;
         data.change = true;
         cb(null, data);
@@ -495,7 +490,9 @@ var watch = exports.watch = function(){
       //cb(null, data);
     }
     cb(null, data);
-  }, interval);
+  };
+
+  watch_timeout = setInterval(watch_process, interval);
       
 };
 
@@ -582,7 +579,7 @@ var read_can = function(can_interface, option, cb){
     }
     return  buf[0];
   }
-}
+};
 
 /* 
  * read frame data from a specific can id, one-time function call
@@ -607,7 +604,7 @@ var readSO = exports.readSO = function(can_interface, option , id, cb){
   }
 
   read_can(can_interface, option, cb);
-}
+};
 
 /*
  * read frame data from a specific can id continously using an integrated setInterval function
@@ -652,7 +649,7 @@ var readSOL = exports.readSOL = function(can_interface, option , id, cb, interva
     });
   }, interval);
  
-}
+};
 
 /*
  * read frame data from can bus w/ options
@@ -744,7 +741,7 @@ var read = exports.read = function(){
   }  
 
   if(!interval||typeof interval === 'function'){
-    interval = 10;
+    interval = 100;
   }
 
   if(!cb){
@@ -793,29 +790,28 @@ var read = exports.read = function(){
     read_can(can_interface, option, function(err, frame){
       if(err){return cb(err, null);}
       if(frame){
-        let fdata = frame.data[0] + '.' + frame.data[1];
-        let can_frame = {id: frame.id, len:frame.len, data:fdata, filter:'off' }
+        let can_frame = {id:frame.id, len:frame.len, data:frame.data, filter:'off'};
         
         // read only from a specific can id
         if(typeof id === 'string' && frame.id === id){ 
-          can_frame = {id: frame.id, len:frame.len, data:fdata, filter:id};
-          //return cb(null, can_frame);
+          can_frame = {id:frame.id, len:frame.len, data:frame.data, filter:id};
+          return cb(null, can_frame);
         }
         // read from a group of can id's
         else if(id && Array.isArray(id)){ 
-	        for (let i = 0; i < id.length; i++) {
+	    for (let i = 0; i < id.length; i++) {
     	      if(id[i] === frame.id){
-              can_frame = {id: frame.id, len:frame.len, data:fdata, filter:id};
-              //return cb(null, can_frame);
+              can_frame = {id:frame.id, len:frame.len, data:frame.data, filter:id};
+              return cb(null, can_frame);
             }
           }		
         }
         // set singleton control for read all can id's 
         else if(!id){
           read_all_singleton = true;
-          //cb(null, can_frame);
+          cb(null, can_frame);
         }
-        cb(null, can_frame);
+        //cb(null, can_frame);
       }
     });
   };
@@ -841,7 +837,7 @@ var read = exports.read = function(){
         }
       }
       else if(id && Array.isArray(id)){
-	      if(watchRead[x].id === arid){
+	if(watchRead[x].id === arid){
           return setMonReadData(x);
         }
       }
@@ -849,18 +845,19 @@ var read = exports.read = function(){
   }
   else if(!id){
     read_all_singleton = true;
-    monReadAll.setInterval_timeout = setInterval_timeout;
-    monReadAll.read_process = read_process;
-    monReadAll.interval = interval;
+    watchReadAll.setInterval_timeout = setInterval_timeout;
+    watchReadAll.read_process = read_process;
+    watchReadAll.interval = interval;
   }
-}
+};
 
 var stopRead = exports.stopRead = function(id){
   if(id){
+    // set specific can id
     if(typeof id === 'string'){ 
       //console.log('valid single can id');
     }
-    // read from a group of can id's
+    // set group filter can id
     else if(id && Array.isArray(id)){ 
       id = '' + id;
     }		
@@ -878,10 +875,10 @@ var stopRead = exports.stopRead = function(id){
     return;
   }
   else{
-    //console.log('monReadAll.setInterval_timeout', monReadAll.setInterval_timeout);
-    if(monReadAll.setInterval_timeout){
-      //console.log('can read all setInterval_timeout', monReadAll.setInterval_timeout);
-      clearInterval(monReadAll.setInterval_timeout);
+    //console.log('watchReadAll.setInterval_timeout', watchReadAll.setInterval_timeout);
+    if(watchReadAll.setInterval_timeout){
+      //console.log('can read all setInterval_timeout', watchReadAll.setInterval_timeout);
+      clearInterval(watchReadAll.setInterval_timeout);
       console.log('can read all stopped ...');
       return;
     }
@@ -895,7 +892,7 @@ var restartRead = exports.restartRead = function(id){
   if(id){
     for (let x = 0; x < watchRead.length; x++) {
       if(watchRead[x].id === id){
-	      clearInterval(watchRead[x].setInterval_timeout);
+	clearInterval(watchRead[x].setInterval_timeout);
         let setInterval_timeout = setInterval(watchRead[x].read_process, watchRead[x].interval);
         watchRead[x].setInterval_timeout = setInterval_timeout;
         console.log('can filter read restarted ...');
@@ -906,9 +903,9 @@ var restartRead = exports.restartRead = function(id){
     return;
   }
   else{
-    if(monReadAll.read_process && monReadAll.interval){
-      clearInterval(monReadAll.setInterval_timeout);
-      monReadAll.setInterval_timeout = setInterval(monReadAll.read_process, monReadAll.interval);
+    if(watchReadAll.read_process && watchReadAll.interval){
+      clearInterval(watchReadAll.setInterval_timeout);
+      watchReadAll.setInterval_timeout = setInterval(watchReadAll.read_process, watchReadAll.interval);
       console.log('can read all restarted ...');
     }
     else{
@@ -962,4 +959,6 @@ canread vcan2,12345678:DFFFFFFF (match only for extended CAN ID 12345678)
 canread vcan2,123:7FF (matches CAN ID 123 - including EFF and RTR frames)
 canread vcan2,123:C00007FF (matches CAN ID 123 - only SFF and non-RTR frames)
 */
+
+
 

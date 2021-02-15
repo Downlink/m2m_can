@@ -16,51 +16,44 @@ let i2c =  require('./node_modules/array-gpio/examples/i2c9808.js');
 /* setup led status indicator using array-gpio */
 let led = r.out(33, 35); 
 
+/* temp variables */
 let temp = null, current_temp = null;
 
 /* rpi temperature device id */ 
 let temp_id = '025';
 
-can.open('can0', 500000, 1000, function(err, result){
+
+//can.open('can0', 500000, function(err, result){
+can.open('can0', {bitrate:500000, txqueuelen:500, rs:10}, function(err, result){
   if(err) return console.error('can open err', err);
 
-     // turn on rpi can_temp led indicator
-     led[0].on();
+  console.log('result', result);
 
-     // send/broadcast temperature data to can bus using a specified interval 
-     setInterval(() => {
-	
-	temp = i2c.getTemp();
+  // turn on rpi can_temp led indicator
+  led[0].on();
 
-	if(current_temp !== temp){
+  // watch data changes in a cyclic mode using a setInterval
+  // built-in within the watch method
 
-	  console.log(current_temp, temp);
+  can.watch('can0', temp_id, (err, data) => { // interval = 100
+  //can.watch('can0', {id:temp_id, interval:1000}, (err, data) => {
+    if(err) return console.error('can watch error', err);
 
-	  can.send('can0', temp_id, temp, (err) => {
-	    if(err) return console.error('can send payload error', err);
+    data.interval = 1000; 
+    data.payload = i2c.getTemp();
 
-	    console.log('** temp has changed, sending can data');
-
-	    current_temp = temp;
-
-            // blink led pin 35 to indicate temp change 
-	    led[1].on();
-	    led[1].off(300);
-	  });
-	}
-
-	/*
-        can.read('can0', temp_id, (err, frame) => {
-	  if(err) return console.error('can send payload error', err);
-          console.log('read frame', frame);
-        });*/
-       
-     }, 1000);
-     	
-     // read all frame data from can bus
-     can.readAll('can0', (err, frame) => {
-       if(err) return console.error('can send payload error', err);
-       console.log('read all frame data', frame);
-     });
+    // if data value has changed, send data to can bus
+    if(data.change){
+      console.log('send temp data ...'); 
+      led[1].pulse(200); 
+      can.send('can0', data.id, data.payload);
+    }
+    else{
+      console.log('no temp data change...');
+    }
+  });
 
 });
+
+
+
